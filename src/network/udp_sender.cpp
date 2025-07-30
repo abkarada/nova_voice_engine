@@ -32,7 +32,19 @@ namespace network {
         }
         server_address_.sin_family = AF_INET;
         server_address_.sin_port = htons(port);
-        inet_pton(AF_INET, ip_address.c_str(), &server_address_.sin_addr);
+        int ip_result = inet_pton(AF_INET, ip_address.c_str(), &server_address_.sin_addr);
+        if (ip_result <= 0) {
+            std::cerr << "HATA: Gecersiz IP adresi: " << ip_address << std::endl;
+            
+#ifdef _WIN32
+            closesocket(socket_);
+            socket_ = INVALID_SOCKET;
+#else
+            close(socket_);
+            socket_ = -1;
+#endif
+            return false;
+        }
         std::cout << "Sender " << ip_address << ":" << port << " adresine baglanmaya hazir." << std::endl;
         return true;
     }
