@@ -11,18 +11,14 @@ Application::Application() {
         receiver_        = std::make_unique<network::UdpReceiver>();
         collector_       = std::make_unique<streaming::Collector>();
         player_          = std::make_unique<playback::AudioPlayer>();
-        // Optimize edilmiş parametrelerle audio processing modüllerini başlat
-        echo_canceller_  = std::make_unique<processing::EchoCanceller>(
-            512,    // filter_length: İyi bir eko yakalama için dengeli uzunluk
-            0.0075f // step_size: Stabil ve etkili adaptasyon için dengeli hız
-        );
-        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(
-            256,    // frame_size: Kalite ve gecikme arasında iyi bir denge
-            1.1f,   // over_subtraction: Cızırtıyı önlemek için daha az agresif
-            0.85f   // gain_smoothing: Daha yumuşak ses için güçlü yumuşatma
-        );
+        // Altın standart parametreler ile ses işleme modüllerini başlat
+        echo_canceller_  = std::make_unique<processing::EchoCanceller>(1024, 0.5f);
+        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(512, -25.0f);
+
         player_->set_playback_callback([this](const std::vector<int16_t>& data){
-            echo_canceller_->on_playback(data);
+            if (echo_canceller_) {
+                echo_canceller_->on_playback(data);
+            }
         });
     } catch (const std::exception& e) {
         std::cerr << "Uygulama başlatılırken kritik hata: " << e.what() << std::endl;
@@ -85,12 +81,10 @@ void Application::tune_echo_canceller(float step_size) {
     }
 }
 
-void Application::tune_noise_suppressor(float over_subtraction, float gain_smoothing) {
+void Application::tune_noise_suppressor(float suppression_db) {
     if (noise_suppressor_) {
-        noise_suppressor_->reset();
-        noise_suppressor_ = std::make_unique<processing::NoiseSuppressor>(256, over_subtraction, gain_smoothing);
-        std::cout << "Gürültü engelleyici - over_subtraction: " << over_subtraction 
-                  << ", gain_smoothing: " << gain_smoothing << " olarak ayarlandı." << std::endl;
+        noise_suppressor_.reset(new processing::NoiseSuppressor(512, suppression_db));
+        std::cout << "Gürültü engelleyici suppression_db: " << suppression_db << " olarak ayarlandı." << std::endl;
     }
 }
 

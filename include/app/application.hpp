@@ -25,7 +25,7 @@ namespace app {
         
         // Audio processing tuning methods
         void tune_echo_canceller(float step_size);
-        void tune_noise_suppressor(float over_subtraction, float gain_smoothing);
+        void tune_noise_suppressor(float suppression_db);
         void reset_audio_processing();
         void print_audio_stats();
         
