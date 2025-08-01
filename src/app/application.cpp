@@ -1,5 +1,6 @@
 #include "app/application.hpp"
 #include <iostream>
+#include <numeric>
 
 namespace app {
 Application::Application() {
@@ -50,10 +51,17 @@ void Application::run(const std::string& target_ip, int send_port, int listen_po
 }
 
 void Application::on_audio_captured(const std::vector<int16_t>& pcm_data) {
+    float avg_in = std::accumulate(pcm_data.begin(), pcm_data.end(), 0.0f) / (pcm_data.size() ? pcm_data.size() : 1);
+    std::cout << "[DEBUG] Capture callback: avg_in = " << avg_in << std::endl;
     std::vector<int16_t> processed = pcm_data;
     echo_canceller_->process(processed);
+    float avg_echo = std::accumulate(processed.begin(), processed.end(), 0.0f) / (processed.size() ? processed.size() : 1);
+    std::cout << "[DEBUG] After echo canceller: avg = " << avg_echo << std::endl;
     noise_suppressor_->process(processed);
+    float avg_ns = std::accumulate(processed.begin(), processed.end(), 0.0f) / (processed.size() ? processed.size() : 1);
+    std::cout << "[DEBUG] After noise suppressor: avg = " << avg_ns << std::endl;
     auto encoded_data = codec_->encode(processed);
+    std::cout << "[DEBUG] Encoded data size: " << encoded_data.size() << std::endl;
     if (encoded_data.empty()) return;
     auto packets = slicer_->slice(encoded_data, 1200);
     sender_->send(packets);
@@ -65,8 +73,12 @@ void Application::on_packet_received(core::Packet packet) {
 }
 
 void Application::on_audio_collected(const std::vector<uint8_t>& encoded_data) {
+    std::cout << "[DEBUG] on_audio_collected: encoded_data size = " << encoded_data.size() << std::endl;
     auto decoded_data = codec_->decode(encoded_data);
+    std::cout << "[DEBUG] Decoded data size: " << decoded_data.size() << std::endl;
     if (decoded_data.empty()) return;
+    float avg_dec = std::accumulate(decoded_data.begin(), decoded_data.end(), 0.0f) / (decoded_data.size() ? decoded_data.size() : 1);
+    std::cout << "[DEBUG] Decoded data avg: " << avg_dec << std::endl;
     player_->submit_audio_data(decoded_data);
 }
 
