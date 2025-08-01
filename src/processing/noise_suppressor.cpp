@@ -44,12 +44,17 @@ void NoiseSuppressor::reset() {
 
 void NoiseSuppressor::process(std::vector<int16_t>& samples) {
     for (size_t i = 0; i < samples.size(); ++i) {
-        // Çıktı örneğini al ve int16'ya dönüştür
-        float out_sample = output_buffer_[output_buffer_pos_];
+        // Orijinal girdi sinyalini sakla
+        const float original_input_sample = static_cast<float>(samples[i]) / 32768.0f;
+
+        // İşlenmiş çıktıyı buffer'dan al
+        const float out_sample = output_buffer_[output_buffer_pos_];
+        
+        // Kullanıcının buffer'ını işlenmiş sinyal ile güncelle
         samples[i] = static_cast<int16_t>(std::clamp(out_sample * 32768.0f, -32768.0f, 32767.0f));
         
-        // Girdi örneğini al ve input buffer'a yerleştir
-        input_buffer_[input_buffer_pos_] = static_cast<float>(samples[i]) / 32768.0f;
+        // Orijinal, dokunulmamış sinyali bir sonraki frame'in işlenmesi için input buffer'a koy
+        input_buffer_[input_buffer_pos_] = original_input_sample;
 
         input_buffer_pos_++;
         output_buffer_pos_++;

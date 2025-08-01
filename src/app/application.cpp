@@ -11,9 +11,9 @@ Application::Application() {
         receiver_        = std::make_unique<network::UdpReceiver>();
         collector_       = std::make_unique<streaming::Collector>();
         player_          = std::make_unique<playback::AudioPlayer>();
-        // Altın standart parametreler ile ses işleme modüllerini başlat
-        echo_canceller_  = std::make_unique<processing::EchoCanceller>(1024, 0.5f);
-        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(512, -25.0f);
+        // Kararlı ve yüksek kaliteli "altın standart" parametreler
+        echo_canceller_  = std::make_unique<processing::EchoCanceller>(1024, 0.2f);
+        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(512, -20.0f);
 
         player_->set_playback_callback([this](const std::vector<int16_t>& data){
             if (echo_canceller_) {
