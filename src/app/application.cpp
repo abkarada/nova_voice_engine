@@ -11,8 +11,16 @@ Application::Application() {
         receiver_        = std::make_unique<network::UdpReceiver>();
         collector_       = std::make_unique<streaming::Collector>();
         player_          = std::make_unique<playback::AudioPlayer>();
-        echo_canceller_  = std::make_unique<processing::EchoCanceller>();
-        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>();
+        // Optimize edilmiş parametrelerle audio processing modüllerini başlat
+        echo_canceller_  = std::make_unique<processing::EchoCanceller>(
+            256,    // filter_length: Daha kısa filter daha az gecikme
+            0.005f  // step_size: Daha küçük step size daha stabil adaptasyon
+        );
+        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(
+            128,    // frame_size: Daha küçük frame daha az gecikme
+            0.015f, // noise_threshold: Daha düşük threshold daha iyi gürültü bastırma
+            1.5f    // over_subtraction: Daha hafif over-subtraction ses kalitesi için
+        );
         player_->set_playback_callback([this](const std::vector<int16_t>& data){
             echo_canceller_->on_playback(data);
         });
@@ -64,5 +72,43 @@ void Application::on_audio_collected(const std::vector<uint8_t>& encoded_data) {
     auto decoded_data = codec_->decode(encoded_data);
     if (decoded_data.empty()) return;
     player_->submit_audio_data(decoded_data);
+}
+
+void Application::tune_echo_canceller(float step_size) {
+    if (echo_canceller_) {
+        echo_canceller_->reset();
+        echo_canceller_ = std::make_unique<processing::EchoCanceller>(256, step_size);
+        player_->set_playback_callback([this](const std::vector<int16_t>& data){
+            echo_canceller_->on_playback(data);
+        });
+        std::cout << "Eko iptal edici step_size: " << step_size << " olarak ayarlandı." << std::endl;
+    }
+}
+
+void Application::tune_noise_suppressor(float threshold, float over_subtraction) {
+    if (noise_suppressor_) {
+        noise_suppressor_->reset();
+        noise_suppressor_ = std::make_unique<processing::NoiseSuppressor>(128, threshold, over_subtraction);
+        std::cout << "Gürültü engelleyici - threshold: " << threshold 
+                  << ", over_subtraction: " << over_subtraction << " olarak ayarlandı." << std::endl;
+    }
+}
+
+void Application::reset_audio_processing() {
+    if (echo_canceller_) {
+        echo_canceller_->reset();
+        std::cout << "Eko iptal edici sıfırlandı." << std::endl;
+    }
+    if (noise_suppressor_) {
+        noise_suppressor_->reset();
+        std::cout << "Gürültü engelleyici sıfırlandı." << std::endl;
+    }
+}
+
+void Application::print_audio_stats() {
+    std::cout << "\n=== Ses İşleme Durumu ===" << std::endl;
+    std::cout << "Eko İptal Edici: " << (echo_canceller_ ? "Aktif (LMS Adaptive Filter)" : "Deaktif") << std::endl;
+    std::cout << "Gürültü Engelleyici: " << (noise_suppressor_ ? "Aktif (Spektral Analiz)" : "Deaktif") << std::endl;
+    std::cout << "=========================" << std::endl;
 }
 }

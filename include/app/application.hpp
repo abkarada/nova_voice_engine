@@ -22,6 +22,13 @@ namespace app {
         Application();
         ~Application();
         void run(const std::string& target_ip, int send_port, int listen_port);
+        
+        // Audio processing tuning methods
+        void tune_echo_canceller(float step_size);
+        void tune_noise_suppressor(float threshold, float over_subtraction);
+        void reset_audio_processing();
+        void print_audio_stats();
+        
     private:
         void on_audio_captured(const std::vector<int16_t>& pcm_data);
         void on_packet_received(core::Packet packet);
