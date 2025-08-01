@@ -5,25 +5,25 @@
 
 namespace processing {
 
-NoiseSuppressor::NoiseSuppressor(size_t frame_size, float noise_threshold, float over_subtraction)
+NoiseSuppressor::NoiseSuppressor(size_t frame_size, float over_subtraction, float gain_smoothing)
     : frame_size_(frame_size),
       overlap_size_(frame_size / 2),
       hop_size_(frame_size / 2),
-      noise_threshold_(noise_threshold),
       over_subtraction_factor_(over_subtraction),
-      spectral_floor_(0.1f),
+      spectral_floor_(0.02f),
       alpha_noise_(0.98f),
-      input_buffer_(frame_size * 2, 0.0f),
-      output_buffer_(frame_size * 2, 0.0f),
+      alpha_gain_(gain_smoothing),
+      input_buffer_(frame_size, 0.0f),
+      output_buffer_(frame_size, 0.0f),
       window_(frame_size),
-      overlap_buffer_(overlap_size_, 0.0f),
       fft_buffer_(frame_size),
       magnitude_spectrum_(frame_size / 2 + 1),
       phase_spectrum_(frame_size / 2 + 1),
-      noise_spectrum_(frame_size / 2 + 1, 0.1f),
+      noise_spectrum_(frame_size / 2 + 1, 0.0f),
       gain_spectrum_(frame_size / 2 + 1, 1.0f),
-      energy_threshold_(0.01f),
-      zero_crossing_threshold_(0.3f),
+      prev_gain_spectrum_(frame_size / 2 + 1, 1.0f),
+      energy_threshold_(0.005f),
+      zero_crossing_threshold_(0.2f),
       energy_history_(10, 0.0f),
       voice_activity_(false),
       buffer_pos_(0),
@@ -33,25 +33,31 @@ NoiseSuppressor::NoiseSuppressor(size_t frame_size, float noise_threshold, float
     for (size_t i = 0; i < frame_size_; ++i) {
         window_[i] = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (frame_size_ - 1)));
     }
+    // Gürültü spektrumunu küçük bir değerle başlat
+    std::fill(noise_spectrum_.begin(), noise_spectrum_.end(), 0.01f);
 }
 
 void NoiseSuppressor::process(std::vector<int16_t>& samples) {
-    for (auto& sample : samples) {
-        // Input buffer'a sample ekle
-        float normalized_sample = static_cast<float>(sample) / 32768.0f;
-        input_buffer_[buffer_pos_] = normalized_sample;
+    for (size_t i = 0; i < samples.size(); ++i) {
+        // Gelen sample'ı float'a çevir ve input buffer'a koy
+        input_buffer_[buffer_pos_] = static_cast<float>(samples[i]) / 32768.0f;
         
-        // Output buffer'dan sample al
+        // İşlenmiş sample'ı output buffer'dan al ve kullanıcıya ver
         float output_sample = output_buffer_[buffer_pos_];
         output_sample = std::clamp(output_sample, -1.0f, 1.0f);
-        sample = static_cast<int16_t>(output_sample * 32767.0f);
+        samples[i] = static_cast<int16_t>(output_sample * 32767.0f);
         
-        output_buffer_[buffer_pos_] = 0.0f; // Buffer'ı temizle
-        buffer_pos_ = (buffer_pos_ + 1) % input_buffer_.size();
-        samples_processed_++;
+        // Output buffer'daki eski veriyi temizle
+        output_buffer_[buffer_pos_] = 0.0f;
+
+        buffer_pos_++;
         
-        // Her hop_size_ sample'da bir frame işle
-        if (samples_processed_ % hop_size_ == 0 && samples_processed_ >= frame_size_) {
+        // Eğer hop_size kadar sample biriktiyse, bir frame işle
+        if (buffer_pos_ == hop_size_) {
+            // Overlap olan kısmı kaydır
+            std::copy(input_buffer_.begin() + hop_size_, input_buffer_.end(), input_buffer_.begin());
+            // Buffer pozisyonunu sıfırla ve yeni sample'lar için yer aç
+            buffer_pos_ = 0;
             process_frame();
         }
     }
@@ -98,12 +104,10 @@ void NoiseSuppressor::process_frame() {
     std::vector<float> output_frame(frame_size_);
     compute_ifft(fft_buffer_, output_frame);
     
-    // Window uygula
-    apply_window(output_frame);
-
-    // Output buffer'a yaz (overlap-add)
+    // Window uygula ve overlap-add
     for (size_t i = 0; i < frame_size_; ++i) {
-        output_buffer_[(start_pos + i) % output_buffer_.size()] += output_frame[i];
+        size_t buffer_idx = (start_pos + i) % input_buffer_.size();
+        output_buffer_[buffer_idx] += output_frame[i] * window_[i];
     }
 }
 
@@ -168,17 +172,28 @@ bool NoiseSuppressor::detect_voice_activity(const std::vector<float>& frame) {
 }
 
 void NoiseSuppressor::compute_wiener_gains(const std::vector<float>& magnitude) {
-    for (size_t i = 0; i < gain_spectrum_.size() && i < magnitude.size() && i < noise_spectrum_.size(); ++i) {
-        if (noise_spectrum_[i] > 1e-10f) {
-            float snr = magnitude[i] / noise_spectrum_[i];
-            float enhanced_snr = snr - over_subtraction_factor_;
-            enhanced_snr = std::max(enhanced_snr, spectral_floor_);
-            
-            gain_spectrum_[i] = enhanced_snr / (1.0f + enhanced_snr);
-            gain_spectrum_[i] = std::clamp(gain_spectrum_[i], spectral_floor_, 1.0f);
-        } else {
-            gain_spectrum_[i] = 1.0f;
-        }
+    // Önceki gain'leri bu frame için başlangıç noktası olarak sakla
+    prev_gain_spectrum_ = gain_spectrum_;
+
+    for (size_t i = 0; i < gain_spectrum_.size(); ++i) {
+        // Sinyal-Gürültü Oranı (SNR) tahmini
+        float signal_power = magnitude[i] * magnitude[i];
+        float noise_power = noise_spectrum_[i] * noise_spectrum_[i];
+
+        // Priori ve Posteriori SNR hesaplaması
+        float post_snr = signal_power / (noise_power + 1e-6f);
+        float prior_snr = alpha_gain_ * (prev_gain_spectrum_[i] * prev_gain_spectrum_[i]) * post_snr +
+                          (1.0f - alpha_gain_) * std::max(0.0f, post_snr - 1.0f);
+
+        // Wiener kazanç formülü
+        float gain = prior_snr / (prior_snr + over_subtraction_factor_);
+        
+        // Kazancı spektral taban ile sınırla
+        gain = std::max(gain, spectral_floor_);
+        
+        // Kazancı yumuşat
+        gain_spectrum_[i] = alpha_gain_ * prev_gain_spectrum_[i] + (1.0f - alpha_gain_) * gain;
+        gain_spectrum_[i] = std::clamp(gain_spectrum_[i], 0.0f, 1.0f);
     }
 }
 
@@ -205,9 +220,9 @@ float NoiseSuppressor::calculate_zero_crossings(const std::vector<float>& frame)
 void NoiseSuppressor::reset() {
     std::fill(input_buffer_.begin(), input_buffer_.end(), 0.0f);
     std::fill(output_buffer_.begin(), output_buffer_.end(), 0.0f);
-    std::fill(overlap_buffer_.begin(), overlap_buffer_.end(), 0.0f);
-    std::fill(noise_spectrum_.begin(), noise_spectrum_.end(), 0.1f);
+    std::fill(noise_spectrum_.begin(), noise_spectrum_.end(), 0.01f);
     std::fill(gain_spectrum_.begin(), gain_spectrum_.end(), 1.0f);
+    std::fill(prev_gain_spectrum_.begin(), prev_gain_spectrum_.end(), 1.0f);
     std::fill(energy_history_.begin(), energy_history_.end(), 0.0f);
     
     buffer_pos_ = 0;

@@ -13,13 +13,13 @@ Application::Application() {
         player_          = std::make_unique<playback::AudioPlayer>();
         // Optimize edilmiş parametrelerle audio processing modüllerini başlat
         echo_canceller_  = std::make_unique<processing::EchoCanceller>(
-            1024,   // filter_length: Daha uzun filtre, daha karmaşık ekoları yakalar
-            0.01f   // step_size: Daha hızlı adaptasyon
+            512,    // filter_length: İyi bir eko yakalama için dengeli uzunluk
+            0.0075f // step_size: Stabil ve etkili adaptasyon için dengeli hız
         );
         noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(
-            256,    // frame_size: Daha büyük frame, daha iyi spektral çözünürlük
-            0.03f,  // noise_threshold: Daha az agresif gürültü bastırma
-            1.2f    // over_subtraction: Daha yumuşak, daha az cızırtı
+            256,    // frame_size: Kalite ve gecikme arasında iyi bir denge
+            1.1f,   // over_subtraction: Cızırtıyı önlemek için daha az agresif
+            0.85f   // gain_smoothing: Daha yumuşak ses için güçlü yumuşatma
         );
         player_->set_playback_callback([this](const std::vector<int16_t>& data){
             echo_canceller_->on_playback(data);
@@ -85,12 +85,12 @@ void Application::tune_echo_canceller(float step_size) {
     }
 }
 
-void Application::tune_noise_suppressor(float threshold, float over_subtraction) {
+void Application::tune_noise_suppressor(float over_subtraction, float gain_smoothing) {
     if (noise_suppressor_) {
         noise_suppressor_->reset();
-        noise_suppressor_ = std::make_unique<processing::NoiseSuppressor>(128, threshold, over_subtraction);
-        std::cout << "Gürültü engelleyici - threshold: " << threshold 
-                  << ", over_subtraction: " << over_subtraction << " olarak ayarlandı." << std::endl;
+        noise_suppressor_ = std::make_unique<processing::NoiseSuppressor>(256, over_subtraction, gain_smoothing);
+        std::cout << "Gürültü engelleyici - over_subtraction: " << over_subtraction 
+                  << ", gain_smoothing: " << gain_smoothing << " olarak ayarlandı." << std::endl;
     }
 }
 

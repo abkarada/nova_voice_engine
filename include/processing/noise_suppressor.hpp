@@ -9,7 +9,7 @@
 namespace processing {
     class NoiseSuppressor {
     public:
-        explicit NoiseSuppressor(size_t frame_size = 256, float noise_threshold = 0.02f, float over_subtraction = 2.0f);
+        explicit NoiseSuppressor(size_t frame_size = 256, float over_subtraction = 1.2f, float gain_smoothing = 0.8f);
         void process(std::vector<int16_t>& samples);
         void reset();
         
@@ -24,12 +24,12 @@ namespace processing {
         float over_subtraction_factor_;
         float spectral_floor_;
         float alpha_noise_;
+        float alpha_gain_; // Gain smoothing faktörü
         
         // Buffers
         std::vector<float> input_buffer_;
         std::vector<float> output_buffer_;
         std::vector<float> window_;
-        std::vector<float> overlap_buffer_;
         
         // Spectral analysis
         std::vector<std::complex<float>> fft_buffer_;
@@ -37,6 +37,7 @@ namespace processing {
         std::vector<float> phase_spectrum_;
         std::vector<float> noise_spectrum_;
         std::vector<float> gain_spectrum_;
+        std::vector<float> prev_gain_spectrum_; // Önceki frame'in gain'i
         
         // VAD (Voice Activity Detection)
         float energy_threshold_;
