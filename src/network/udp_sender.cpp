@@ -1,6 +1,7 @@
 #include "network/udp_sender.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <cstdio>
 
 namespace network {
     UdpSender::UdpSender() {
@@ -51,7 +52,13 @@ namespace network {
 
     void UdpSender::send(const core::Packet& packet) {
         auto bytes = packet.to_bytes();
-        sendto(socket_, reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0, (const sockaddr*)&server_address_, sizeof(server_address_));
+        ssize_t sent = sendto(socket_, reinterpret_cast<const char*>(bytes.data()),
+                              bytes.size(), 0,
+                              (const sockaddr*)&server_address_,
+                              sizeof(server_address_));
+        if (sent < 0) {
+            std::perror("sendto");
+        }
     }
 
     void UdpSender::send(const std::vector<core::Packet>& packets) {

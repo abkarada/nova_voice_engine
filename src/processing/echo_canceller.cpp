@@ -21,8 +21,12 @@ void EchoCanceller::reset() {
 void EchoCanceller::on_playback(const std::vector<int16_t>& samples) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (int16_t sample : samples) {
-        // Buffer'ı kaydır
-        std::move(reference_buffer_.begin(), reference_buffer_.end() - 1, reference_buffer_.begin() + 1);
+        // Buffer'ı kaydır. Overlapping aralıklar nedeniyle move yerine
+        // copy_backward kullanılır.
+        std::copy_backward(reference_buffer_.begin(),
+                           reference_buffer_.end() - 1,
+                           reference_buffer_.end());
+
         // Yeni örneği ekle (normalize edilmiş)
         reference_buffer_[0] = static_cast<float>(sample) / 32768.0f;
     }

@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <cstdio>
 
 namespace network {
 UdpReceiver::UdpReceiver() {
@@ -65,12 +66,16 @@ void UdpReceiver::receive_loop() {
     sockaddr_in client_address{};
     socklen_t client_len = sizeof(client_address);
     while (is_running_) {
-        int bytes_received = recvfrom(socket_, reinterpret_cast<char*>(buffer.data()), buffer.size(), 0, (sockaddr*)&client_address, &client_len);
+        int bytes_received = recvfrom(socket_, reinterpret_cast<char*>(buffer.data()),
+                                     buffer.size(), 0,
+                                     (sockaddr*)&client_address, &client_len);
         if (bytes_received > 0) {
             std::vector<uint8_t> received_data(buffer.begin(), buffer.begin() + bytes_received);
             if (on_packet_received_) {
                 on_packet_received_(core::Packet::from_bytes(received_data));
             }
+        } else if (bytes_received < 0 && is_running_) {
+            std::perror("recvfrom");
         }
     }
     std::cout << "Receiver dongusu sonlandi." << std::endl;
