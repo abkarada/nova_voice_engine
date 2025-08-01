@@ -98,13 +98,12 @@ void NoiseSuppressor::process_frame() {
     std::vector<float> output_frame(frame_size_);
     compute_ifft(fft_buffer_, output_frame);
     
-    // Window uygula ve overlap-add
+    // Window uygula
     apply_window(output_frame);
-    
+
     // Output buffer'a yaz (overlap-add)
-    size_t output_start = (buffer_pos_ + output_buffer_.size() - hop_size_) % output_buffer_.size();
-    for (size_t i = 0; i < hop_size_; ++i) {
-        output_buffer_[(output_start + i) % output_buffer_.size()] += output_frame[i];
+    for (size_t i = 0; i < frame_size_; ++i) {
+        output_buffer_[(start_pos + i) % output_buffer_.size()] += output_frame[i];
     }
 }
 

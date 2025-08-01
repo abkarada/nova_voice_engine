@@ -13,13 +13,13 @@ Application::Application() {
         player_          = std::make_unique<playback::AudioPlayer>();
         // Optimize edilmiş parametrelerle audio processing modüllerini başlat
         echo_canceller_  = std::make_unique<processing::EchoCanceller>(
-            256,    // filter_length: Daha kısa filter daha az gecikme
-            0.005f  // step_size: Daha küçük step size daha stabil adaptasyon
+            1024,   // filter_length: Daha uzun filtre, daha karmaşık ekoları yakalar
+            0.01f   // step_size: Daha hızlı adaptasyon
         );
         noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(
-            128,    // frame_size: Daha küçük frame daha az gecikme
-            0.015f, // noise_threshold: Daha düşük threshold daha iyi gürültü bastırma
-            1.5f    // over_subtraction: Daha hafif over-subtraction ses kalitesi için
+            256,    // frame_size: Daha büyük frame, daha iyi spektral çözünürlük
+            0.03f,  // noise_threshold: Daha az agresif gürültü bastırma
+            1.2f    // over_subtraction: Daha yumuşak, daha az cızırtı
         );
         player_->set_playback_callback([this](const std::vector<int16_t>& data){
             echo_canceller_->on_playback(data);
