@@ -1,26 +1,21 @@
 #include "app/application.hpp"
 #include <iostream>
+#include <vector>
 #include <numeric>
+#include <cstring>
 
 namespace app {
+
 Application::Application() {
     try {
-        capturer_        = std::make_unique<capture::AudioCapturer>();
-        codec_           = std::make_unique<codec::OpusCodec>();
-        slicer_          = std::make_unique<streaming::Slicer>();
-        sender_          = std::make_unique<network::UdpSender>();
-        receiver_        = std::make_unique<network::UdpReceiver>();
-        collector_       = std::make_unique<streaming::Collector>();
-        player_          = std::make_unique<playback::AudioPlayer>();
-        // Kararlı ve yüksek kaliteli "altın standart" parametreler
-        echo_canceller_  = std::make_unique<processing::EchoCanceller>(1024, 0.2f);
-        noise_suppressor_= std::make_unique<processing::NoiseSuppressor>(512, -20.0f);
-
-        player_->set_playback_callback([this](const std::vector<int16_t>& data){
-            if (echo_canceller_) {
-                echo_canceller_->on_playback(data);
-            }
-        });
+        audio_manager_    = std::make_unique<audio::AudioManager>();
+        codec_            = std::make_unique<codec::OpusCodec>();
+        slicer_           = std::make_unique<streaming::Slicer>();
+        sender_           = std::make_unique<network::UdpSender>();
+        receiver_         = std::make_unique<network::UdpReceiver>();
+        collector_        = std::make_unique<streaming::Collector>();
+        echo_canceller_   = std::make_unique<processing::EchoCanceller>(1024, 0.2f);
+        noise_suppressor_ = std::make_unique<processing::NoiseSuppressor>(512, -20.0f);
     } catch (const std::exception& e) {
         std::cerr << "Uygulama başlatılırken kritik hata: " << e.what() << std::endl;
         throw;
@@ -32,12 +27,24 @@ Application::~Application() {
 }
 
 void Application::run(const std::string& target_ip, int send_port, int listen_port) {
-    if (!sender_->connect(target_ip, send_port)) { std::cerr << "HATA: Sender bağlanamadı." << std::endl; return; }
+    if (!sender_->connect(target_ip, send_port)) {
+        std::cerr << "HATA: Sender bağlanamadı." << std::endl;
+        return;
+    }
+    
     auto packet_callback = [this](core::Packet packet) { this->on_packet_received(std::move(packet)); };
-    if (!receiver_->start(listen_port, packet_callback)) { std::cerr << "HATA: Receiver başlatılamadı." << std::endl; return; }
-    if (!player_->start()) { std::cerr << "HATA: Player başlatılamadı." << std::endl; return; }
-    auto capture_callback = [this](const std::vector<int16_t>& pcm_data) { this->on_audio_captured(pcm_data); };
-    if (!capturer_->start(capture_callback)) { std::cerr << "HATA: Capturer başlatılamadı." << std::endl; return; }
+    if (!receiver_->start(listen_port, packet_callback)) {
+        std::cerr << "HATA: Receiver başlatılamadı." << std::endl;
+        return;
+    }
+
+    auto input_callback = [this](const std::vector<int16_t>& data) { this->on_audio_input(data); };
+    auto output_callback = [this](std::vector<int16_t>& data) { this->on_audio_output(data); };
+
+    if (!audio_manager_->start(input_callback, output_callback)) {
+        std::cerr << "HATA: AudioManager başlatılamadı." << std::endl;
+        return;
+    }
 
     std::cout << "\n>>> Voice Engine calisiyor... <<<" << std::endl;
     std::cout << ">>> Hedef: " << target_ip << ":" << send_port << std::endl;
@@ -45,76 +52,58 @@ void Application::run(const std::string& target_ip, int send_port, int listen_po
     std::cout << ">>> Kapatmak icin Enter'a basin. <<<" << std::endl;
     std::cin.get();
 
-    capturer_->stop();
-    player_->stop();
+    audio_manager_->stop();
     receiver_->stop();
 }
 
-void Application::on_audio_captured(const std::vector<int16_t>& pcm_data) {
-    float avg_in = std::accumulate(pcm_data.begin(), pcm_data.end(), 0.0f) / (pcm_data.size() ? pcm_data.size() : 1);
-    std::cout << "[DEBUG] Capture callback: avg_in = " << avg_in << std::endl;
-    std::vector<int16_t> processed = pcm_data;
-    echo_canceller_->process(processed);
-    float avg_echo = std::accumulate(processed.begin(), processed.end(), 0.0f) / (processed.size() ? processed.size() : 1);
-    std::cout << "[DEBUG] After echo canceller: avg = " << avg_echo << std::endl;
-    noise_suppressor_->process(processed);
-    float avg_ns = std::accumulate(processed.begin(), processed.end(), 0.0f) / (processed.size() ? processed.size() : 1);
-    std::cout << "[DEBUG] After noise suppressor: avg = " << avg_ns << std::endl;
-    auto encoded_data = codec_->encode(processed);
-    std::cout << "[DEBUG] Encoded data size: " << encoded_data.size() << std::endl;
+// Mikrofondan ses geldiğinde bu fonksiyon tetiklenir
+void Application::on_audio_input(const std::vector<int16_t>& input_data) {
+    std::vector<int16_t> processed_data = input_data;
+
+    // Eko iptali için önce hoparlöre ne gönderildiğini (playback) işlemeliyiz.
+    // Bu, on_audio_output içinde yapılır.
+    // Ardından mikrofon verisini (capture) işleriz.
+    echo_canceller_->process(processed_data);
+    noise_suppressor_->process(processed_data);
+
+    auto encoded_data = codec_->encode(processed_data);
     if (encoded_data.empty()) return;
+    
     auto packets = slicer_->slice(encoded_data, 1200);
     sender_->send(packets);
 }
 
+// Hoparlöre ses gönderileceği zaman bu fonksiyon tetiklenir
+void Application::on_audio_output(std::vector<int16_t>& output_data) {
+    std::lock_guard<std::mutex> lock(playback_mutex_);
+    
+    const size_t samples_needed = output_data.size();
+    if (playback_buffer_.size() >= samples_needed) {
+        std::memcpy(output_data.data(), playback_buffer_.data(), samples_needed * sizeof(int16_t));
+        playback_buffer_.erase(playback_buffer_.begin(), playback_buffer_.begin() + samples_needed);
+    } else {
+        // Yeterli veri yoksa sessizlik gönder
+        std::memset(output_data.data(), 0, samples_needed * sizeof(int16_t));
+    }
+    
+    // Eko iptalicinin referans olarak kullanması için çalınan sesi ona gönder
+    echo_canceller_->on_playback(output_data);
+}
+
+// Ağdan paket geldiğinde
 void Application::on_packet_received(core::Packet packet) {
     auto collection_callback = [this](const std::vector<uint8_t>& data) { this->on_audio_collected(data); };
     collector_->collect(packet, collection_callback);
 }
 
+// Paketler birleşip tam bir ses verisi olduğunda
 void Application::on_audio_collected(const std::vector<uint8_t>& encoded_data) {
-    std::cout << "[DEBUG] on_audio_collected: encoded_data size = " << encoded_data.size() << std::endl;
     auto decoded_data = codec_->decode(encoded_data);
-    std::cout << "[DEBUG] Decoded data size: " << decoded_data.size() << std::endl;
     if (decoded_data.empty()) return;
-    float avg_dec = std::accumulate(decoded_data.begin(), decoded_data.end(), 0.0f) / (decoded_data.size() ? decoded_data.size() : 1);
-    std::cout << "[DEBUG] Decoded data avg: " << avg_dec << std::endl;
-    player_->submit_audio_data(decoded_data);
+
+    // Çalınmak üzere veriyi buffer'a ekle
+    std::lock_guard<std::mutex> lock(playback_mutex_);
+    playback_buffer_.insert(playback_buffer_.end(), decoded_data.begin(), decoded_data.end());
 }
 
-void Application::tune_echo_canceller(float step_size) {
-    if (echo_canceller_) {
-        echo_canceller_->reset();
-        echo_canceller_ = std::make_unique<processing::EchoCanceller>(256, step_size);
-        player_->set_playback_callback([this](const std::vector<int16_t>& data){
-            echo_canceller_->on_playback(data);
-        });
-        std::cout << "Eko iptal edici step_size: " << step_size << " olarak ayarlandı." << std::endl;
-    }
-}
-
-void Application::tune_noise_suppressor(float suppression_db) {
-    if (noise_suppressor_) {
-        noise_suppressor_.reset(new processing::NoiseSuppressor(512, suppression_db));
-        std::cout << "Gürültü engelleyici suppression_db: " << suppression_db << " olarak ayarlandı." << std::endl;
-    }
-}
-
-void Application::reset_audio_processing() {
-    if (echo_canceller_) {
-        echo_canceller_->reset();
-        std::cout << "Eko iptal edici sıfırlandı." << std::endl;
-    }
-    if (noise_suppressor_) {
-        noise_suppressor_->reset();
-        std::cout << "Gürültü engelleyici sıfırlandı." << std::endl;
-    }
-}
-
-void Application::print_audio_stats() {
-    std::cout << "\n=== Ses İşleme Durumu ===" << std::endl;
-    std::cout << "Eko İptal Edici: " << (echo_canceller_ ? "Aktif (LMS Adaptive Filter)" : "Deaktif") << std::endl;
-    std::cout << "Gürültü Engelleyici: " << (noise_suppressor_ ? "Aktif (Spektral Analiz)" : "Deaktif") << std::endl;
-    std::cout << "=========================" << std::endl;
-}
 }
