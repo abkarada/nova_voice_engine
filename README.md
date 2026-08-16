@@ -1,124 +1,186 @@
-# 🎙️ NovaEngine Voice Engine
+# Nova Voice Engine
 
-NovaEngine Voice Engine is a high-performance, real-time audio transmission module designed for peer-to-peer (P2P) communication with ultra-low latency and minimal packet loss. Built as part of the NovaEngine media stack, this voice subsystem enables efficient, encrypted, and adaptive audio streaming over unstable or NAT-restricted networks.
+An experimental real-time voice communication prototype written in C++.
 
----
+The project explores a simple end-to-end audio pipeline built around PortAudio, Opus, and UDP. It captures microphone input, processes and encodes audio frames, transmits them over UDP, and decodes received frames for playback.
 
-## ✨ Features
+This repository was originally developed as part of earlier peer-to-peer communication experiments and is kept as a standalone reference implementation.
 
-- 🔄 **Full-Duplex Audio Streaming** – Real-time bi-directional audio communication
-- 🎛️ **Adaptive Jitter Buffer** – Handles network jitter and delays with dynamic buffering
-- 🔊 **Opus / PCM Audio Codecs** – Choose between compressed (Opus) or raw (PCM) audio
-- 🌐 **P2P UDP Transmission** – Bypasses centralized servers using UDP hole punching
-- 🧩 **Packet Slicing and Reassembly** – Supports MTU-friendly audio fragmentation
-- ♻️ **Multipath Redundancy** – Simultaneously sends voice packets over multiple tunnels
-- 🔐 **Optional Encryption** – AES-256 or custom symmetric encryption for secure transport
-- 📦 **Loss Recovery** – Optional Forward Error Correction (FEC) support
+## Overview
 
----
-
-## 📦 Architecture Overview
+The current implementation provides a bidirectional voice pipeline:
 
 ```text
-+---------------------------+
-|  Microphone / Audio Input|
-+---------------------------+
-             ↓
-     +----------------+
-     |  Audio Encoder |
-     +----------------+
-             ↓
-  +------------------------+
-  |  Slicer & Packetizer  |
-  +------------------------+
-             ↓
-  +------------------------+
-  |  UDP Sender (Multi-Tunnel) |
-  +------------------------+
+Microphone
+    |
+    v
+PortAudio Capture
+    |
+    v
+Audio Processing
+    |
+    v
+Opus Encoder
+    |
+    v
+Packetization
+    |
+    v
+UDP Transport
+    |
+    v
+UDP Receiver
+    |
+    v
+Opus Decoder
+    |
+    v
+Playback Buffer
 
-      <<< NETWORK TRANSFER >>>
+Each instance can simultaneously send audio to a remote peer and listen for incoming UDP packets on a local port.
 
-  +------------------------+
-  |  UDP Receiver (Smart Collector) |
-  +------------------------+
-             ↓
-    +--------------------+
-    |  Jitter Buffer     |
-    +--------------------+
-             ↓
-     +----------------+
-     | Audio Decoder  |
-     +----------------+
-             ↓
-     +----------------+
-     |  Speaker Out   |
-     +----------------+
+Current Features
+Full-duplex audio capture and playback using PortAudio
+Opus encoding and decoding
+10 ms audio frames
+Variable-bitrate Opus configuration
+Opus DTX and in-band FEC enabled at the codec level
+UDP-based packet transport
+Sequence-numbered packet representation
+Basic MTU-oriented payload slicing
+Dedicated receiver thread
+Playback buffering
+Basic echo-cancellation experiment
+Basic noise-suppression experiment
+Cross-platform socket handling for Linux and Windows
+CMake-based build system
+Architecture
 
-⚙️ Build Instructions
-Prerequisites
-C++17 or later
+The project is divided into several small components:
 
+src/
+├── app/
+│   ├── application.cpp
+│   └── main.cpp
+├── audio/
+│   └── audio_manager.cpp
+├── codec/
+│   └── opus_codec.cpp
+├── core/
+│   └── packet.cpp
+├── network/
+│   ├── udp_sender.cpp
+│   └── udp_receiver.cpp
+├── processing/
+│   ├── echo_canceller.cpp
+│   └── noise_suppressor.cpp
+├── streaming/
+│   ├── collector.cpp
+│   └── slicer.cpp
+└── tools/
+    └── network_test.cpp
+Audio
+
+AudioManager provides microphone capture and speaker playback through PortAudio.
+
+The current configuration processes audio in approximately 10 ms frames.
+
+Codec
+
+OpusCodec wraps the Opus encoder and decoder.
+
+The encoder is configured for voice traffic with:
+
+64 kbps target bitrate
+variable bitrate
+voice signal optimization
+discontinuous transmission (DTX)
+Opus in-band FEC
+Transport
+
+Voice packets are transmitted directly over UDP.
+
+UdpSender sends serialized packets to a configured peer, while UdpReceiver runs a dedicated receive loop and forwards decoded packet objects to the application layer.
+
+The transport layer is intentionally simple and does not implement congestion control, retransmission, NAT traversal, or a reliable delivery protocol.
+
+Packetization
+
+Encoded audio is passed through a small packetization layer before transmission.
+
+Packets carry monotonically increasing sequence numbers and payload data. The current implementation uses a configurable maximum slice size, with the application using 1200-byte payload slices.
+
+Playback
+
+Received Opus frames are decoded and appended to a protected playback buffer.
+
+When insufficient audio is available, the output callback emits silence rather than blocking the real-time audio callback.
+
+Building
+Requirements
+C++17-compatible compiler
 CMake 3.15+
+pkg-config
+PortAudio
+Opus
 
-OpenCV (for timing/logging/debug UI)
+On Debian/Ubuntu:
 
-PortAudio (for cross-platform audio I/O)
-
-libopus (optional for Opus support)
-
-Build
-
-git clone https://github.com/abkarada/NovaEngine.git
-cd NovaEngine
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-🔧 Runtime Parameters
-Example:
-./novaengine_voice 192.168.1.5 5000 5001 5002
-192.168.1.5 → target IP
-
-5000, 5001, 5002 → multiple UDP tunnels (redundant delivery)
-
-🧠 Design Philosophy
-NovaEngine Voice Engine was built with the following principles:
-
-Low latency beats everything.
-
-Loss tolerance must be adaptive.
-
-No server should stand between peers.
-
-Performance should scale to unstable networks.
-
-Encryption and jitter control are first-class citizens.
-
-📁 Project Structure
-voice_engine/
-├── audio_input.cpp / .hpp       # Captures microphone input
-├── audio_output.cpp / .hpp      # Handles speaker output
-├── encoder.cpp / decoder.cpp    # Opus/PCM codec implementation
-├── udp_sender.cpp / receiver.cpp# Custom UDP burst transmission
-├── slicer.cpp                   # Frame slicing for MTU alignment
-├── smart_collector.cpp         # Packet reordering & loss masking
-├── jitter_buffer.cpp           # Adaptive jitter control
-└── main_voice.cpp              # Main entry point for sender/receiver
-📜 License
-MIT License. See LICENSE for details.
-
-🤝 Credits
-Developed as part of the SafeRoom Project and NovaEngine by Abdurrahman Karadağ and contributors.
-
-💡 Coming Soon
-VAD (Voice Activity Detection)
-
-Live encryption key rotation
-
-💡 New Features
-Echo cancellation (AEC)
-
-Noise suppression module
+sudo apt install build-essential cmake pkg-config \
+    portaudio19-dev libopus-dev
+Compile
+git clone https://github.com/abkarada/nova_voice_engine.git
+cd nova_voice_engine
 
 
-Let me know if you want this in lightweight markdown format, or if you'd like a split into separate `README`, `INSTALL.md`, and `ARCHITECTURE.md` files for documentation clarity.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 
+The main executable is:
+
+build/voice_engine
+
+The repository also builds a small UDP network test utility:
+
+build/network_test
+Running
+
+The application expects a remote peer address together with local and remote UDP ports.
+
+Run one instance on each peer with the corresponding addresses and ports.
+
+For exact command-line options:
+
+./build/voice_engine --help
+Project Status
+
+This repository is an experimental prototype and is not intended to be a production voice stack.
+
+In particular, the current implementation does not provide:
+
+a complete adaptive jitter buffer
+congestion control
+reliable packet recovery
+cryptographic transport security
+NAT traversal
+production-grade acoustic echo cancellation
+production-grade noise suppression
+multipath transport
+
+Some components were created as part of broader experiments and remain intentionally simple or incomplete.
+
+Purpose
+
+The project was primarily built to explore the interaction between:
+
+real-time audio capture
+audio codecs
+packetization
+UDP transport
+receiver-side buffering
+basic audio processing
+
+It is kept public as a small systems/networking experiment and as a reference for later real-time communication work.
+    |
+    v
+PortAudio Output
